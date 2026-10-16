@@ -59,6 +59,7 @@ class CloudflarePagesProvider(IntegrationProvider):
     description = "See your Cloudflare Pages site build: deploy started / live / failed as Marvin events (with the build log's reason), deployments, and one-click notification setup."
     category = CATEGORY_DESTINATION
     icon = "☁️"
+    logo = "logo.svg"  # the Cloudflare Pages mark, shown instead of the emoji
 
     content = CONTENT
 
