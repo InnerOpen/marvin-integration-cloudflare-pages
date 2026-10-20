@@ -10,6 +10,12 @@ The loop: published content changes → Marvin queues one (coalesced) site rebui
 builds the site → Cloudflare posts "started" / "succeeded" / "failed" here → the toast. A failure
 carries the end of the build log (the `build_log` action), not just a link.
 
+Each of the three also settles the build under Settings > Automation > Results (0.3.0): the Deploy action (a site rebuild runs it)
+records the build as in flight with its deployment id, and the notification's `automation_result` step finishes it by that id, in
+Cloudflare's own words (`EVENT_DEPLOYMENT_SUCCESS` ...; the provider maps them). The step names no connection: Marvin reads the words
+through the connection that installed this webhook. A build Marvin did not start (a git push) is listed too, from its first notification.
+A failed build's result carries the same build log tail as the toast.
+
 One parameter: `integration` (this integration's slug in the workspace, default `cloudflare_pages`).
 """
 
@@ -49,6 +55,18 @@ DEPLOY_WEBHOOK = ContentBlueprint(
 )
 
 
+def _result(message: str | None = None) -> dict:
+    """Report the notification to Results: the build's status in Cloudflare's words, found by its deployment id. No `integration`: Marvin
+    reads the words through the connection that installed this webhook."""
+    step = {
+        "kind": "automation_result",
+        "status": f"{_DATA}event}}",
+        "remote_id": f"{_DATA}deployment_id}}",
+        "target": f"{_DATA}project_name}}",
+    }
+    return {**step, "message": message} if message else step
+
+
 def _on(event: str) -> dict:
     return {"type": "incoming_webhook", "webhook": WEBHOOK_SLUG}, [{"field": "event.payload.data.event", "op": "eq", "value": event}]
 
@@ -70,23 +88,29 @@ def _workflow(slug: str, name: str, description: str, cf_event: str, actions: li
 DEPLOY_STARTED = _workflow(
     "cloudflare-pages-deploy-started",
     "Cloudflare Pages: deploy started",
-    "When Cloudflare starts building the site, emit Marvin's site deploy started event (an activity toast).",
+    "When Cloudflare starts building the site, emit Marvin's site deploy started event (an activity toast) and note the build under Results.",
     "EVENT_DEPLOYMENT_STARTED",
-    [{"kind": "emit_event", "event": "site_deployment_started", "message": f"Building {_DATA}project_name}} on Cloudflare Pages", **_COMMON}],
+    [
+        {"kind": "emit_event", "event": "site_deployment_started", "message": f"Building {_DATA}project_name}} on Cloudflare Pages", **_COMMON},
+        _result(),
+    ],
 )
 
 DEPLOY_SUCCEEDED = _workflow(
     "cloudflare-pages-deploy-succeeded",
     "Cloudflare Pages: deployed",
-    "When the site is live, emit Marvin's site deployed event (an activity toast).",
+    "When the site is live, emit Marvin's site deployed event (an activity toast) and mark the build succeeded under Results.",
     "EVENT_DEPLOYMENT_SUCCESS",
-    [{"kind": "emit_event", "event": "site_deployment_completed", "message": f"Site is live — {_DATA}pages_dev_url}}", **_COMMON}],
+    [
+        {"kind": "emit_event", "event": "site_deployment_completed", "message": f"Site is live — {_DATA}pages_dev_url}}", **_COMMON},
+        _result(),
+    ],
 )
 
 DEPLOY_FAILED = _workflow(
     "cloudflare-pages-deploy-failed",
     "Cloudflare Pages: deploy failed",
-    "When a deploy fails, read the end of its build log and emit Marvin's site deploy failed event with the reason.",
+    "When a deploy fails, read the end of its build log, emit Marvin's site deploy failed event with the reason and mark the build failed under Results.",
     "EVENT_DEPLOYMENT_FAILED",
     [
         # build_log never fails the step: without access to logs it returns a link instead of a reason.
@@ -104,6 +128,7 @@ DEPLOY_FAILED = _workflow(
             "error": "${steps.log.output.reason}",
             **_COMMON,
         },
+        _result("${steps.log.output.reason}"),  # the build log tail, as the toast shows it
     ],
     parameters=(INTEGRATION_PARAM,),
 )

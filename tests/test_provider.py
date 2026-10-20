@@ -168,6 +168,7 @@ def test_deploy_posts_the_production_branch_as_multipart():
     out = _run(http, "deploy")
     post = next(c for c in http.calls if c["method"] == "POST")
     assert out["deployment_id"] == "dep3" and b'name="branch"\r\n\r\nmain' in post["data"]
+    assert out["link"] == f"https://dash.cloudflare.com/{ACCOUNT}/pages/view/{PROJECT}/dep3"
     assert post["headers"]["Content-Type"].startswith("multipart/form-data; boundary=")
 
 
@@ -221,3 +222,117 @@ def test_the_failure_workflow_reads_the_build_log_through_this_provider():
     assert actions[0]["action"] == "build_log" and actions[0]["id"] == "log"
     assert actions[1]["error"] == "${steps.log.output.reason}"
     assert {a.key for a in CloudflarePagesProvider.actions} >= {"build_log"}
+
+
+# --- results: the deploy hand-off and the notification workflows that settle it ---------------------------
+
+
+def test_deploy_declares_a_hand_off_by_deployment_id_with_a_link_to_the_dashboard_build():
+    deploy = CloudflarePagesProvider().get_action("deploy")
+
+    assert deploy.hands_off.remote_id == "deployment_id" and deploy.hands_off.remote_url == "link"
+    assert deploy.hands_off.record_if == ""  # every deploy that starts is a hand-off
+    assert {"deployment_id", "link"} <= set(deploy.output_schema["properties"])
+
+
+def test_no_other_action_declares_a_hand_off():
+    others = [a.key for a in CloudflarePagesProvider.actions if a.key != "deploy" and a.hands_off]
+    assert others == []
+
+
+def test_the_deploy_hand_off_is_well_formed_for_the_sdk():
+    from marvin_integration_sdk import hands_off_problems
+
+    assert [p for a in CloudflarePagesProvider.actions for p in hands_off_problems(a)] == []
+
+
+@pytest.mark.parametrize(
+    ("word", "marvins"),
+    [
+        ("EVENT_DEPLOYMENT_STARTED", "in_flight"),
+        ("EVENT_DEPLOYMENT_SUCCESS", "succeeded"),
+        ("EVENT_DEPLOYMENT_FAILED", "failed"),
+        ("active", "in_flight"),
+        ("idle", "in_flight"),
+        ("success", "succeeded"),
+        ("failure", "failed"),
+        ("canceled", "failed"),
+        ("  Success ", "succeeded"),
+        ("in_flight", "in_flight"),
+    ],
+)
+def test_cloudflares_words_for_a_build_map_to_marvins_three(word, marvins):
+    assert CloudflarePagesProvider().result_status(word, "deploy") == marvins
+
+
+def test_a_word_cloudflare_does_not_use_for_the_end_of_a_build_is_not_guessed():
+    assert CloudflarePagesProvider().result_status("skipped") is None
+    assert CloudflarePagesProvider().result_status("EVENT_SOMETHING_ELSE") is None
+
+
+def test_every_notification_event_the_connect_action_subscribes_to_has_a_status():
+    from marvin_integration_cloudflare_pages.provider import DEPLOY_EVENTS
+
+    provider = CloudflarePagesProvider()
+    assert all(provider.result_status(event) for event in DEPLOY_EVENTS)
+
+
+def _results(blueprint):
+    steps = [a for a in blueprint.payload["definition"]["actions"] if a["kind"] == "automation_result"]
+    assert len(steps) == 1, "each notification workflow reports to Results exactly once"
+    return steps[0]
+
+
+def test_each_notification_workflow_reports_the_build_to_results_by_its_deployment_id_in_cloudflares_words_naming_no_connection():
+    from marvin_integration_cloudflare_pages.content import CONTENT
+
+    for blueprint in CONTENT[1:]:
+        step = _results(blueprint)
+        assert step["status"] == "${event.payload.data.event}"
+        assert step["remote_id"] == "${event.payload.data.deployment_id}"
+        assert step["target"] == "${event.payload.data.project_name}"
+        assert "integration" not in step  # Marvin reads the words through the connection that installed the webhook
+        assert blueprint.payload["definition"]["actions"][-1] == step  # last: the toast is emitted first
+
+
+def test_the_statuses_the_workflows_send_are_words_the_provider_maps():
+    from marvin_integration_cloudflare_pages.content import CONTENT
+
+    provider = CloudflarePagesProvider()
+    for blueprint in CONTENT[1:]:
+        (condition,) = blueprint.payload["definition"]["conditions"]
+        assert provider.result_status(condition["value"], "deploy") is not None
+
+
+def test_only_the_failure_workflow_carries_a_message_and_it_is_the_build_log_tail_the_toast_shows():
+    from marvin_integration_cloudflare_pages.content import DEPLOY_FAILED, DEPLOY_STARTED, DEPLOY_SUCCEEDED
+
+    assert _results(DEPLOY_FAILED)["message"] == "${steps.log.output.reason}"
+    assert _results(DEPLOY_FAILED)["message"] == next(a for a in DEPLOY_FAILED.payload["definition"]["actions"] if a["kind"] == "emit_event")["error"]
+    assert "message" not in _results(DEPLOY_STARTED) and "message" not in _results(DEPLOY_SUCCEEDED)
+
+
+def test_the_notification_workflows_still_emit_their_site_deployment_events_before_reporting():
+    from marvin_integration_cloudflare_pages.content import CONTENT
+
+    emitted = {}
+    for blueprint in CONTENT[1:]:
+        kinds = [a["kind"] for a in blueprint.payload["definition"]["actions"]]
+        assert kinds[-1] == "automation_result" and "emit_event" in kinds
+        assert kinds.index("emit_event") < kinds.index("automation_result")
+        emitted[blueprint.slug] = next(a["event"] for a in blueprint.payload["definition"]["actions"] if a["kind"] == "emit_event")
+    assert emitted == {
+        "cloudflare-pages-deploy-started": "site_deployment_started",
+        "cloudflare-pages-deploy-succeeded": "site_deployment_completed",
+        "cloudflare-pages-deploy-failed": "site_deployment_failed",
+    }
+
+
+def test_only_the_failure_workflow_needs_a_connection_parameter_for_the_build_log():
+    from marvin_integration_cloudflare_pages.content import CONTENT
+
+    assert {b.slug: [p["key"] for p in b.parameters] for b in CONTENT[1:]} == {
+        "cloudflare-pages-deploy-started": [],
+        "cloudflare-pages-deploy-succeeded": [],
+        "cloudflare-pages-deploy-failed": ["integration"],
+    }

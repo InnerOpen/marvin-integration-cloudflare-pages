@@ -17,7 +17,11 @@ from urllib.parse import quote
 
 from marvin_integration_sdk import (
     CATEGORY_DESTINATION,
+    RESULT_FAILED,
+    RESULT_IN_FLIGHT,
+    RESULT_SUCCEEDED,
     CredentialField,
+    HandsOff,
     IntegrationContext,
     IntegrationProvider,
     ProviderAction,
@@ -31,6 +35,20 @@ API = "https://api.cloudflare.com/client/v4"
 DASH = "https://dash.cloudflare.com"
 ENVIRONMENTS = {"production": "ENVIRONMENT_PRODUCTION", "preview": "ENVIRONMENT_PREVIEW"}
 DEPLOY_EVENTS = ("EVENT_DEPLOYMENT_STARTED", "EVENT_DEPLOYMENT_SUCCESS", "EVENT_DEPLOYMENT_FAILED")
+# How a build is going, in Cloudflare's words, to Marvin's (Settings > Automation > Results). The notification's own `event` words come
+# first (what the three notification workflows report); then the stage statuses the Pages API gives a deployment (list_deployments'
+# `status`): idle and active are waiting or building, success and failure are the end, canceled is a build that never finished. A stage
+# `skipped` (a build Cloudflare chose not to run) is left out on purpose: it is neither, so it stays in flight with the word shown.
+BUILD_STATUSES = {
+    "EVENT_DEPLOYMENT_STARTED": RESULT_IN_FLIGHT,
+    "EVENT_DEPLOYMENT_SUCCESS": RESULT_SUCCEEDED,
+    "EVENT_DEPLOYMENT_FAILED": RESULT_FAILED,
+    "idle": RESULT_IN_FLIGHT,
+    "active": RESULT_IN_FLIGHT,
+    "success": RESULT_SUCCEEDED,
+    "failure": RESULT_FAILED,
+    "canceled": RESULT_FAILED,
+}
 DEFAULT_LIMIT = 5
 MAX_LIMIT = 25
 DEFAULT_LOG_LINES = 30
@@ -143,13 +161,25 @@ class CloudflarePagesProvider(IntegrationProvider):
         ProviderAction(
             key="deploy",
             label="Deploy",
-            description="Start a new production deployment of the project's branch (needs Cloudflare Pages Edit).",
+            description=(
+                "Start a new production deployment of the project's branch (needs Cloudflare Pages Edit). It only starts the build: "
+                "Marvin keeps it under Results as in flight until Cloudflare's notification says how it ended."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {"branch": {"type": "string", "description": "Default: the project's production branch."}},
                 "additionalProperties": False,
             },
-            output_schema={"type": "object", "properties": {"deployment_id": _ID, "url": _ID}},
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "deployment_id": _ID,
+                    "url": _ID,
+                    "link": {"type": "string", "description": "The deployment's page in the Cloudflare dashboard (its build log)."},
+                },
+            },
+            # The build runs on Cloudflare's side; its started / success / failed notifications settle the result by the deployment id.
+            hands_off=HandsOff(remote_id="deployment_id", remote_url="link", statuses=BUILD_STATUSES),
         ),
     )
 
@@ -296,7 +326,7 @@ class CloudflarePagesProvider(IntegrationProvider):
         return {"destination_id": destination_id, "policy_id": created.get("id"), "created": True}
 
     def _deploy(self, args: dict, ctx: IntegrationContext) -> dict:
-        _, path = self._project_path(ctx)
+        account, path = self._project_path(ctx)
         branch = str(args.get("branch") or "").strip()
         if not branch:
             branch = (self._ok(self._get(ctx, path), "project lookup") or {}).get("production_branch") or "main"
@@ -305,4 +335,7 @@ class CloudflarePagesProvider(IntegrationProvider):
         form = f'--{boundary}\r\nContent-Disposition: form-data; name="branch"\r\n\r\n{branch}\r\n--{boundary}--\r\n'.encode()
         resp = ctx.http.post(f"{API}{path}/deployments", data=form, headers=self._headers(ctx, f"multipart/form-data; boundary={boundary}"))
         d = self._ok(resp, "create deployment") or {}
-        return {"deployment_id": d.get("id"), "url": d.get("url")}
+        deployment_id = d.get("id")
+        _, project = self._cfg(ctx)
+        link = f"{DASH}/{account}/pages/view/{project}/{deployment_id}" if deployment_id else None
+        return {"deployment_id": deployment_id, "url": d.get("url"), "link": link}
