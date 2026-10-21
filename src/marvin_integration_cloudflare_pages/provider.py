@@ -151,7 +151,7 @@ class CloudflarePagesProvider(IntegrationProvider):
                 "properties": {
                     "webhook_url": {"type": "string", "description": "The cloudflare-pages incoming webhook's URL in this workspace."},
                     "webhook_secret": {"type": "string", "description": "The webhook's signing secret — pass {{CLOUDFLARE_NOTIFY_TOKEN}}."},
-                    "environments": {"type": "array", "items": {"type": "string", "enum": list(ENVIRONMENTS)}, "description": "Default production."},
+                    "environments": {"type": "array", "items": {"type": "string", "enum": list(ENVIRONMENTS)}, "description": "Default production. Add preview when Marvin's rebuild deploys a non-production branch (e.g. develop): Cloudflare counts that as a preview deployment."},
                 },
                 "required": ["webhook_url", "webhook_secret"],
                 "additionalProperties": False,

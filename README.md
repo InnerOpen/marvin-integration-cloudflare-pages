@@ -61,6 +61,7 @@ Needs Marvin with Automation results and integration SDK 0.13+.
 1. Connect the integration (token, account ID, project) and **Apply** its content.
 2. Open the `cloudflare-pages` incoming webhook: **Mint token**, then under **Signing** click **Generate key** (stored as `CLOUDFLARE_NOTIFY_TOKEN`). Copy the webhook URL.
 3. Run **Connect notifications** on the card with `webhook_url` = that URL and `webhook_secret` = `{{CLOUDFLARE_NOTIFY_TOKEN}}`.
+   **If Marvin's site rebuild builds a non-production branch** (e.g. the deploy action is subscribed with `branch: develop`), also set `environments` to `production, preview`. Cloudflare counts a non-production branch as a *preview* deployment, and the alert covers only production by default, so those builds would stay *In flight* under Results with nothing reported back (seen on Mash & Burn, 2026-10-21).
 4. Switch the webhook and the three workflows on.
 
 The next deploy shows up under the bell.
