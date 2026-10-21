@@ -14,7 +14,8 @@ Each of the three also settles the build under Settings > Automation > Results (
 records the build as in flight with its deployment id, and the notification's `automation_result` step finishes it by that id, in
 Cloudflare's own words (`EVENT_DEPLOYMENT_SUCCESS` ...; the provider maps them). The step names no connection: Marvin reads the words
 through the connection that installed this webhook. A build Marvin did not start (a git push) is listed too, from its first notification.
-A failed build's result carries the same build log tail as the toast.
+A failed build's result carries the same build log tail as the toast; a build that went live carries a summary of it (environment, branch and the
+commit message's first line), and the deployment's `pages_dev_url` as the link to it when the result has none.
 
 One parameter: `integration` (this integration's slug in the workspace, default `cloudflare_pages`).
 """
@@ -30,7 +31,7 @@ INTEGRATION_PARAM = {
     "label": "Which Cloudflare Pages connection",
     "kind": "integration",
     "default": "cloudflare_pages",
-    "help": "The failure workflow reads that connection's build log.",
+    "help": "The success and failure workflows read that connection's deployment and build log.",
 }
 
 _DATA = "${event.payload.data."
@@ -56,13 +57,14 @@ DEPLOY_WEBHOOK = ContentBlueprint(
 
 
 def _result(message: str | None = None) -> dict:
-    """Report the notification to Results: the build's status in Cloudflare's words, found by its deployment id. No `integration`: Marvin
-    reads the words through the connection that installed this webhook."""
+    """Report the notification to Results: the build's status in Cloudflare's words, found by its deployment id, with the build's summary
+    and its page. No `integration`: Marvin reads the words through the connection that installed this webhook."""
     step = {
         "kind": "automation_result",
         "status": f"{_DATA}event}}",
         "remote_id": f"{_DATA}deployment_id}}",
         "target": f"{_DATA}project_name}}",
+        "remote_url": f"{_DATA}pages_dev_url}}",
     }
     return {**step, "message": message} if message else step
 
@@ -102,9 +104,18 @@ DEPLOY_SUCCEEDED = _workflow(
     "When the site is live, emit Marvin's site deployed event (an activity toast) and mark the build succeeded under Results.",
     "EVENT_DEPLOYMENT_SUCCESS",
     [
+        # deployment_summary never fails the step: without access it says "Deployed".
+        {
+            "kind": "integration",
+            "id": "deployment",
+            "integration": "{{integration}}",
+            "action": "deployment_summary",
+            "args": {"deployment_id": f"{_DATA}deployment_id}}"},
+        },
         {"kind": "emit_event", "event": "site_deployment_completed", "message": f"Site is live — {_DATA}pages_dev_url}}", **_COMMON},
-        _result(),
+        _result("${steps.deployment.output.summary}"),  # e.g. "Preview on develop: Fix the feed"
     ],
+    parameters=(INTEGRATION_PARAM,),
 )
 
 DEPLOY_FAILED = _workflow(

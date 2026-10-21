@@ -54,6 +54,7 @@ MAX_LIMIT = 25
 DEFAULT_LOG_LINES = 30
 MAX_LOG_LINES = 200
 ERROR_TEXT_LIMIT = 300
+SUMMARY_LIMIT = 120
 REASON_LIMIT = 500
 # Lines worth quoting as the reason a build failed; otherwise the last lines are the reason.
 FAILURE_MARKERS = ("error", "failed", "cannot", "not found", "exited with", "exception", "✘")
@@ -140,6 +141,17 @@ class CloudflarePagesProvider(IntegrationProvider):
             cost_hint="free",
         ),
         ProviderAction(
+            key="deployment_summary",
+            label="Deployment summary",
+            description=(
+                "One deployment in a line, e.g. 'Preview on develop: Fix the feed' (environment, branch, the commit message's first line), "
+                "with its URL. Never fails: without access it returns 'Deployed'."
+            ),
+            input_schema={"type": "object", "properties": {"deployment_id": _ID}, "required": ["deployment_id"], "additionalProperties": False},
+            output_schema={"type": "object", "properties": {"summary": _ID, "url": _ID, "environment": _ID, "branch": _ID, "commit_message": _ID}},
+            cost_hint="free",
+        ),
+        ProviderAction(
             key="connect_notifications",
             label="Connect notifications",
             description=(
@@ -178,8 +190,9 @@ class CloudflarePagesProvider(IntegrationProvider):
                     "link": {"type": "string", "description": "The deployment's page in the Cloudflare dashboard (its build log)."},
                 },
             },
-            # The build runs on Cloudflare's side; its started / success / failed notifications settle the result by the deployment id.
-            hands_off=HandsOff(remote_id="deployment_id", remote_url="link", statuses=BUILD_STATUSES),
+            # The build runs on Cloudflare's side; its started / success / failed notifications settle the result by the deployment id. The
+            # branch is the result's target (blank when the call leaves it to the project's production branch).
+            hands_off=HandsOff(remote_id="deployment_id", remote_url="link", target="branch", statuses=BUILD_STATUSES),
         ),
     )
 
@@ -242,6 +255,7 @@ class CloudflarePagesProvider(IntegrationProvider):
         handler = {
             "list_deployments": self._list_deployments,
             "build_log": self._build_log,
+            "deployment_summary": self._deployment_summary,
             "connect_notifications": self._connect_notifications,
             "deploy": self._deploy,
         }.get(key)
@@ -279,6 +293,29 @@ class CloudflarePagesProvider(IntegrationProvider):
         flagged = [line for line in tail if any(marker in line.lower() for marker in FAILURE_MARKERS)]
         reason = (flagged[-1] if flagged else (tail[-1] if tail else "The build log is empty."))[:REASON_LIMIT]
         return {"reason": f"{reason} — {link}", "lines": tail, "link": link}
+
+    def _deployment_summary(self, args: dict, ctx: IntegrationContext) -> dict:
+        """The Results line for a build that went live, read from the deployment itself (the notification's own fields vary)."""
+        _, path = self._project_path(ctx)
+        deployment_id = str(args.get("deployment_id") or "").strip()
+        fallback = {"summary": "Deployed", "url": None, "environment": None, "branch": None, "commit_message": None}
+        if not deployment_id:
+            return fallback
+        try:
+            d = self._deployment(self._ok(self._get(ctx, f"{path}/deployments/{quote(deployment_id, safe='')}"), "deployment") or {})
+        except Exception as e:  # noqa: BLE001 — a plain 'Deployed' beats a failed workflow
+            ctx.logger.warning("cloudflare_pages: deployment %s unavailable: %s", deployment_id, e)
+            return fallback
+        env = (d.get("environment") or "").strip().capitalize() or "Deployed"
+        first_line = (d.get("commit_message") or "").splitlines()[0].strip() if d.get("commit_message") else ""
+        summary = env + (f" on {d['branch']}" if d.get("branch") else "") + (f": {first_line}" if first_line else "")
+        return {
+            "summary": summary[:SUMMARY_LIMIT],
+            "url": d.get("url"),
+            "environment": d.get("environment"),
+            "branch": d.get("branch"),
+            "commit_message": d.get("commit_message"),
+        }
 
     def _connect_notifications(self, args: dict, ctx: IntegrationContext) -> dict:
         account, project = self._cfg(ctx)
