@@ -227,6 +227,11 @@ def test_the_failure_workflow_reads_the_build_log_through_this_provider():
 # --- results: the deploy hand-off and the notification workflows that settle it ---------------------------
 
 
+def test_deploy_records_the_branch_it_was_asked_to_build_as_the_results_target():
+    (deploy,) = [a for a in CloudflarePagesProvider.actions if a.key == "deploy"]
+    assert deploy.hands_off.target == "branch" and "branch" in deploy.input_schema["properties"]
+
+
 def test_deploy_declares_a_hand_off_by_deployment_id_with_a_link_to_the_dashboard_build():
     deploy = CloudflarePagesProvider().get_action("deploy")
 
@@ -304,12 +309,27 @@ def test_the_statuses_the_workflows_send_are_words_the_provider_maps():
         assert provider.result_status(condition["value"], "deploy") is not None
 
 
-def test_only_the_failure_workflow_carries_a_message_and_it_is_the_build_log_tail_the_toast_shows():
-    from marvin_integration_cloudflare_pages.content import DEPLOY_FAILED, DEPLOY_STARTED, DEPLOY_SUCCEEDED
+def test_a_failed_build_carries_the_build_log_tail_the_toast_shows_and_one_that_went_live_a_summary_of_it():
+    from marvin_integration_cloudflare_pages.content import BUILD_SUMMARY, DEPLOY_FAILED, DEPLOY_STARTED, DEPLOY_SUCCEEDED
 
     assert _results(DEPLOY_FAILED)["message"] == "${steps.log.output.reason}"
     assert _results(DEPLOY_FAILED)["message"] == next(a for a in DEPLOY_FAILED.payload["definition"]["actions"] if a["kind"] == "emit_event")["error"]
-    assert "message" not in _results(DEPLOY_STARTED) and "message" not in _results(DEPLOY_SUCCEEDED)
+    assert _results(DEPLOY_SUCCEEDED)["message"] == BUILD_SUMMARY
+    assert "message" not in _results(DEPLOY_STARTED)  # still building: nothing to summarise yet
+
+
+def test_the_summary_names_the_environment_branch_and_the_commit_messages_first_line():
+    meta = "${event.payload.data.deployment_trigger.metadata."
+    from marvin_integration_cloudflare_pages.content import BUILD_SUMMARY
+
+    assert '${event.payload.data.environment|lower|replace:"environment_"' in BUILD_SUMMARY  # production or ENVIRONMENT_PRODUCTION
+    assert f"{meta}branch" in BUILD_SUMMARY and f'{meta}commit_message|split:"\n"|first' in BUILD_SUMMARY  # a real newline, the first line
+
+
+def test_each_notification_workflow_gives_the_deployments_page_as_the_link_to_the_run():
+    from marvin_integration_cloudflare_pages.content import CONTENT
+
+    assert {_results(b)["remote_url"] for b in CONTENT[1:]} == {"${event.payload.data.pages_dev_url}"}
 
 
 def test_the_notification_workflows_still_emit_their_site_deployment_events_before_reporting():

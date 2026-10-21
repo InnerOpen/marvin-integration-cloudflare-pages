@@ -178,8 +178,9 @@ class CloudflarePagesProvider(IntegrationProvider):
                     "link": {"type": "string", "description": "The deployment's page in the Cloudflare dashboard (its build log)."},
                 },
             },
-            # The build runs on Cloudflare's side; its started / success / failed notifications settle the result by the deployment id.
-            hands_off=HandsOff(remote_id="deployment_id", remote_url="link", statuses=BUILD_STATUSES),
+            # The build runs on Cloudflare's side; its started / success / failed notifications settle the result by the deployment id. The
+            # branch is the result's target (blank when the call leaves it to the project's production branch).
+            hands_off=HandsOff(remote_id="deployment_id", remote_url="link", target="branch", statuses=BUILD_STATUSES),
         ),
     )
 
