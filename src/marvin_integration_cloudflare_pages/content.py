@@ -31,7 +31,7 @@ INTEGRATION_PARAM = {
     "label": "Which Cloudflare Pages connection",
     "kind": "integration",
     "default": "cloudflare_pages",
-    "help": "The failure workflow reads that connection's build log.",
+    "help": "The success and failure workflows read that connection's deployment and build log.",
 }
 
 _DATA = "${event.payload.data."
@@ -53,15 +53,6 @@ DEPLOY_WEBHOOK = ContentBlueprint(
         "signature_scheme": "cloudflare",
         "signing_secret_ref": SECRET_REF,
     },
-)
-
-
-_META = f"{_DATA}deployment_trigger.metadata."
-# The message of a build that went live, e.g. "Preview on develop: Fix the feed": the environment (the notification may say ENVIRONMENT_PREVIEW or preview), the branch and the commit
-# message's first line; each falls back to a word when the notification leaves it out.
-BUILD_SUMMARY = (
-    f'{_DATA}environment|lower|replace:"environment_"|default:"build"|capitalize}} on {_META}branch|default:"the default branch"}}: '
-    f'{_META}commit_message|split:"\n"|first|truncate:100|default:"no commit message"}}'
 )
 
 
@@ -113,9 +104,18 @@ DEPLOY_SUCCEEDED = _workflow(
     "When the site is live, emit Marvin's site deployed event (an activity toast) and mark the build succeeded under Results.",
     "EVENT_DEPLOYMENT_SUCCESS",
     [
+        # deployment_summary never fails the step: without access it says "Deployed".
+        {
+            "kind": "integration",
+            "id": "deployment",
+            "integration": "{{integration}}",
+            "action": "deployment_summary",
+            "args": {"deployment_id": f"{_DATA}deployment_id}}"},
+        },
         {"kind": "emit_event", "event": "site_deployment_completed", "message": f"Site is live — {_DATA}pages_dev_url}}", **_COMMON},
-        _result(BUILD_SUMMARY),
+        _result("${steps.deployment.output.summary}"),  # e.g. "Preview on develop: Fix the feed"
     ],
+    parameters=(INTEGRATION_PARAM,),
 )
 
 DEPLOY_FAILED = _workflow(

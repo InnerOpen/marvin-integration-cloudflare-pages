@@ -310,20 +310,39 @@ def test_the_statuses_the_workflows_send_are_words_the_provider_maps():
 
 
 def test_a_failed_build_carries_the_build_log_tail_the_toast_shows_and_one_that_went_live_a_summary_of_it():
-    from marvin_integration_cloudflare_pages.content import BUILD_SUMMARY, DEPLOY_FAILED, DEPLOY_STARTED, DEPLOY_SUCCEEDED
+    from marvin_integration_cloudflare_pages.content import DEPLOY_FAILED, DEPLOY_STARTED, DEPLOY_SUCCEEDED
 
     assert _results(DEPLOY_FAILED)["message"] == "${steps.log.output.reason}"
     assert _results(DEPLOY_FAILED)["message"] == next(a for a in DEPLOY_FAILED.payload["definition"]["actions"] if a["kind"] == "emit_event")["error"]
-    assert _results(DEPLOY_SUCCEEDED)["message"] == BUILD_SUMMARY
+    assert _results(DEPLOY_SUCCEEDED)["message"] == "${steps.deployment.output.summary}"
+    (lookup,) = [a for a in DEPLOY_SUCCEEDED.payload["definition"]["actions"] if a["kind"] == "integration"]
+    assert (lookup["action"], lookup["args"]) == ("deployment_summary", {"deployment_id": "${event.payload.data.deployment_id}"})
     assert "message" not in _results(DEPLOY_STARTED)  # still building: nothing to summarise yet
 
 
-def test_the_summary_names_the_environment_branch_and_the_commit_messages_first_line():
-    meta = "${event.payload.data.deployment_trigger.metadata."
-    from marvin_integration_cloudflare_pages.content import BUILD_SUMMARY
+def _deployment(environment="preview", branch="develop", commit_message="Fix the feed\n\nLonger body"):
+    meta = {"branch": branch, "commit_hash": "abc", "commit_message": commit_message}
+    return {"result": {"id": "dep7", "environment": environment, "url": "https://dep7.my-site.pages.dev", "deployment_trigger": {"metadata": meta}}}
 
-    assert '${event.payload.data.environment|lower|replace:"environment_"' in BUILD_SUMMARY  # production or ENVIRONMENT_PRODUCTION
-    assert f"{meta}branch" in BUILD_SUMMARY and f'{meta}commit_message|split:"\n"|first' in BUILD_SUMMARY  # a real newline, the first line
+
+def test_the_deployment_summary_names_the_environment_branch_and_the_commit_messages_first_line():
+    out = _run(_Http([("GET", "/deployments/dep7", 200, _deployment())]), "deployment_summary", deployment_id="dep7")
+
+    assert out["summary"] == "Preview on develop: Fix the feed"
+    assert out["url"] == "https://dep7.my-site.pages.dev" and out["branch"] == "develop"
+
+
+def test_the_deployment_summary_leaves_out_what_the_deployment_lacks():
+    out = _run(_Http([("GET", "/deployments/dep7", 200, _deployment("production", None, None))]), "deployment_summary", deployment_id="dep7")
+
+    assert out["summary"] == "Production"
+
+
+def test_the_deployment_summary_never_fails_without_access_or_an_id():
+    denied = _Http([("GET", "/deployments/dep7", 403, {"errors": [{"code": 10000, "message": "no"}]})])
+
+    assert _run(denied, "deployment_summary", deployment_id="dep7")["summary"] == "Deployed"
+    assert _run(_Http([]), "deployment_summary", deployment_id="")["summary"] == "Deployed"
 
 
 def test_each_notification_workflow_gives_the_deployments_page_as_the_link_to_the_run():
@@ -348,11 +367,11 @@ def test_the_notification_workflows_still_emit_their_site_deployment_events_befo
     }
 
 
-def test_only_the_failure_workflow_needs_a_connection_parameter_for_the_build_log():
+def test_the_success_and_failure_workflows_need_a_connection_parameter_to_read_the_deployment():
     from marvin_integration_cloudflare_pages.content import CONTENT
 
     assert {b.slug: [p["key"] for p in b.parameters] for b in CONTENT[1:]} == {
         "cloudflare-pages-deploy-started": [],
-        "cloudflare-pages-deploy-succeeded": [],
+        "cloudflare-pages-deploy-succeeded": ["integration"],
         "cloudflare-pages-deploy-failed": ["integration"],
     }
