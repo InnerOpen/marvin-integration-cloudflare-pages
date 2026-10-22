@@ -31,7 +31,7 @@ they send the destination's shared secret in `cf-webhook-auth`, which Marvin com
 ## What a workspace gets — declared, applied from the integration's card
 
 Nothing is created on install. **Apply** creates only what is missing; the webhook and workflows
-arrive switched off.
+arrive switched off, and the Playbook arrives as a draft.
 
 | Kind | Slug | What it does |
 |---|---|---|
@@ -39,6 +39,7 @@ arrive switched off.
 | workflow | `cloudflare-pages-deploy-started` | `EVENT_DEPLOYMENT_STARTED` → `site_deployment_started`, and the build is noted under Results. |
 | workflow | `cloudflare-pages-deploy-succeeded` | `EVENT_DEPLOYMENT_SUCCESS` → `site_deployment_completed` ("Site is live — <url>"), and the build is marked *Succeeded*. |
 | workflow | `cloudflare-pages-deploy-failed` | `EVENT_DEPLOYMENT_FAILED` → `build_log` → `site_deployment_failed` with the reason, and the build is marked *Failed* with the same build log tail. |
+| playbook | `cloudflare-pages-failed-build` | (0.5.0, needs SDK 0.15 and a Marvin that knows Playbook blueprints) How to explain a failed build: find the `site_deployment_failed` event, read the build-log reason the workflow above recorded, match it against the common causes in `references/causes.md`, answer in a fixed shape, and never guess past the log. Narrows the agent to reading tools (`allowed-tools`: `list_events describe_event get_workflow find_entries get_entry`). Arrives as a **draft Playbook** for an admin to read and publish; the folder is `src/marvin_integration_cloudflare_pages/playbooks/cloudflare-pages-failed-build/`, shipped as package data. A Marvin that predates Playbook blueprints skips it and loads the rest. |
 
 ## Results (0.3.0)
 

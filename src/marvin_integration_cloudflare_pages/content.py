@@ -20,7 +20,7 @@ commit message's first line), and the deployment's `pages_dev_url` as the link t
 One parameter: `integration` (this integration's slug in the workspace, default `cloudflare_pages`).
 """
 
-from marvin_integration_sdk import ContentBlueprint
+from marvin_integration_sdk import ContentBlueprint, playbook_blueprint
 
 CATEGORY = "Cloudflare Pages"
 WEBHOOK_SLUG = "cloudflare-pages"
@@ -144,4 +144,8 @@ DEPLOY_FAILED = _workflow(
     parameters=(INTEGRATION_PARAM,),
 )
 
-CONTENT = (DEPLOY_WEBHOOK, DEPLOY_STARTED, DEPLOY_SUCCEEDED, DEPLOY_FAILED)
+# A Playbook (0.5, SDK 0.15): how to explain a failed build, as a skill folder in the package's data. A workspace adds it from the card as a
+# draft Playbook, reads it and publishes it; an older Marvin skips it and loads the rest.
+FAILED_BUILD_PLAYBOOK = playbook_blueprint(__package__, "playbooks/cloudflare-pages-failed-build")
+
+CONTENT = (DEPLOY_WEBHOOK, DEPLOY_STARTED, DEPLOY_SUCCEEDED, DEPLOY_FAILED, FAILED_BUILD_PLAYBOOK)

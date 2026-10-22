@@ -1,12 +1,13 @@
 [project]
 name = "marvin-integration-cloudflare-pages"
-version = "0.4.0"
+version = "0.5.0"
 description = "Cloudflare Pages integration for Marvin — site build and deploy status as Marvin events, build logs, deployments, and one-click notification setup."
 readme = "README.md"
 requires-python = ">=3.11"
 # 0.3: HttpHelper.put/delete (updating a notification policy). mode="token" signature presets need Marvin rc.143+.
 # 0.13: HandsOff (the deploy action's hand-off, shown under Results).
-dependencies = ["marvin-integration-sdk>=0.13,<1"]
+# 0.15: `playbook_blueprint` — the integration ships a Playbook.
+dependencies = ["marvin-integration-sdk>=0.15,<1"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.11"]

@@ -182,12 +182,16 @@ def test_unknown_action_and_missing_token():
 # --- declared content -----------------------------------------------------------------------------
 
 
+def _workflows(content):
+    return [b for b in content if b.kind == "workflow"]
+
+
 def test_contributes_the_cloudflare_token_scheme():
     scheme = CloudflarePagesProvider.signature_schemes["cloudflare"]
     assert scheme["mode"] == "token" and scheme["header"] == "cf-webhook-auth"
 
 
-def test_declares_the_webhook_and_three_workflows():
+def test_declares_the_webhook_three_workflows_and_a_playbook():
     from marvin_integration_cloudflare_pages.content import CONTENT
 
     assert [(b.kind, b.slug) for b in CONTENT] == [
@@ -195,6 +199,7 @@ def test_declares_the_webhook_and_three_workflows():
         ("workflow", "cloudflare-pages-deploy-started"),
         ("workflow", "cloudflare-pages-deploy-succeeded"),
         ("workflow", "cloudflare-pages-deploy-failed"),
+        ("playbook", "cloudflare-pages-failed-build"),
     ]
     assert CONTENT[0].payload["signature_scheme"] == "cloudflare"
 
@@ -203,7 +208,7 @@ def test_each_workflow_maps_one_cloudflare_event_to_one_marvin_event():
     from marvin_integration_cloudflare_pages.content import CONTENT
 
     mapping = {}
-    for b in CONTENT[1:]:
+    for b in _workflows(CONTENT):
         d = b.payload["definition"]
         assert d["trigger"] == {"type": "incoming_webhook", "webhook": "cloudflare-pages"}
         emit = next(a for a in d["actions"] if a["kind"] == "emit_event")
@@ -291,7 +296,7 @@ def _results(blueprint):
 def test_each_notification_workflow_reports_the_build_to_results_by_its_deployment_id_in_cloudflares_words_naming_no_connection():
     from marvin_integration_cloudflare_pages.content import CONTENT
 
-    for blueprint in CONTENT[1:]:
+    for blueprint in _workflows(CONTENT):
         step = _results(blueprint)
         assert step["status"] == "${event.payload.data.event}"
         assert step["remote_id"] == "${event.payload.data.deployment_id}"
@@ -304,7 +309,7 @@ def test_the_statuses_the_workflows_send_are_words_the_provider_maps():
     from marvin_integration_cloudflare_pages.content import CONTENT
 
     provider = CloudflarePagesProvider()
-    for blueprint in CONTENT[1:]:
+    for blueprint in _workflows(CONTENT):
         (condition,) = blueprint.payload["definition"]["conditions"]
         assert provider.result_status(condition["value"], "deploy") is not None
 
@@ -348,14 +353,14 @@ def test_the_deployment_summary_never_fails_without_access_or_an_id():
 def test_each_notification_workflow_gives_the_deployments_page_as_the_link_to_the_run():
     from marvin_integration_cloudflare_pages.content import CONTENT
 
-    assert {_results(b)["remote_url"] for b in CONTENT[1:]} == {"${event.payload.data.pages_dev_url}"}
+    assert {_results(b)["remote_url"] for b in _workflows(CONTENT)} == {"${event.payload.data.pages_dev_url}"}
 
 
 def test_the_notification_workflows_still_emit_their_site_deployment_events_before_reporting():
     from marvin_integration_cloudflare_pages.content import CONTENT
 
     emitted = {}
-    for blueprint in CONTENT[1:]:
+    for blueprint in _workflows(CONTENT):
         kinds = [a["kind"] for a in blueprint.payload["definition"]["actions"]]
         assert kinds[-1] == "automation_result" and "emit_event" in kinds
         assert kinds.index("emit_event") < kinds.index("automation_result")
@@ -370,7 +375,7 @@ def test_the_notification_workflows_still_emit_their_site_deployment_events_befo
 def test_the_success_and_failure_workflows_need_a_connection_parameter_to_read_the_deployment():
     from marvin_integration_cloudflare_pages.content import CONTENT
 
-    assert {b.slug: [p["key"] for p in b.parameters] for b in CONTENT[1:]} == {
+    assert {b.slug: [p["key"] for p in b.parameters] for b in _workflows(CONTENT)} == {
         "cloudflare-pages-deploy-started": [],
         "cloudflare-pages-deploy-succeeded": ["integration"],
         "cloudflare-pages-deploy-failed": ["integration"],
